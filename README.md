@@ -1,6 +1,6 @@
 # Sewerage Designer
 
- Read this in other languages: [Español](www.google.com), [中文](www.google.com)
+ Read this in other languages: [Español](m), [中文]()
 ***
 
 This program contains different functions useful in the design of a sewerage system
