@@ -1,18 +1,30 @@
-import random, math
+import random, math, scipy.optimize as sci
 
 def asker():
-  sections = []
+  sections, pozos = list(), list()
   print('Ingrese sus sus secciones con este formato separadas por un espacio.')
-  print('Tramo\t Inicio\t Fin\t Longitud\t Altura\t Propios\t Tributarios\t Total \nLas poblaciones que no tenga, introdúzcalas con un signo de interrogación (?).')
+  print('Tramo\t Inicio\t Fin\t Longitud\t Altura\t Propios\t Tributarios\t Total \nLas poblaciones que no tenga, introdúzcalas con un signo de interrogación (?). \nLa altura también puede ponerla como \'?\'.\nAsegúrese de no repetir el nombre de los pozos y preferentemente de los tramos tampoco.')
   count = 1
   while True:
     ans = input(f'Tramo {count}: ')
     count += 1
     if ans == '0' or ans == 'salir': break
     elif ans == '': count -= 1
-    else: 
+    else:
       ans = ans.split()
       sections.append(ans)
+
+  print("Ingrese sus la identificación de cada pozo y sus cotas")
+  count = 1
+  print("   Pozo\tCota")
+  while True:
+    ans = input(f'--> {count}: ')
+    count += 1
+    if ans == '0' or ans == 'salir': break
+    elif ans == '': count -= 1
+    else:
+      ans = ans.split()
+      pozos.append(ans)
 
   for section in sections:
     index = 3
@@ -22,27 +34,26 @@ def asker():
         section[index] = dato
       except: pass
       finally: index += 1
-  return sections
 
-#[ Nom , PI , PF , 60 , 3 , own , added , total , slope , harmon , Qmin , Qmed , Qinst , Qextr, diameter, Qpipe ]
-#[ 0   , 1 , 2 ,   3  , 4 ,  5  ,   6   ,   7   ,   8   ,   9    ,  10  ,  11  ,   12  , 13   ,    14   ,  15   ]
+  pozos_dict = dict()
+  for pozo in pozos:
+    pozos_dict[pozo[0]] = float(pozo[1])
+
+  return sections, pozos_dict
+
+#[ Nom , PI , PF , length , height , own , added , total , slope , harmon , Qmin , Qmed , Qinst , Qextr, diameter, Qpipe ]
+#[ 0   , 1  , 2  ,   3    ,  4     ,  5  ,   6   ,   7   ,   8   ,   9    ,  10  ,  11  ,   12  , 13   ,        14    ,  15   ]
 
 class Sewerage:
-  def __init__(self, tramos, **data):
-    self.tramos = tramos
-    for x, y in data.items():
-      if x == 'cs' : self.cs  = y
-      if x == 'cd' : self.cd  = y
-      if x == 'dot': self.dot = y
-      if x == 'n'  : self.n   = y
-    try:    self.cs += 0
-    except: self.cs = 1.5
-    try:    self.cd += 0
-    except: self.cd = 0.8
-    try:    self.dot += 0
-    except: self.dot = 200
-    try:    self.n += 0
-    except: self.n = 0.009
+  def __init__(self, tramos, pozos, cs = 1.5, cd = 0.8, dot = 200, n = 0.009):
+    self.pozos, self.tramos = pozos, tramos
+    # Settings
+    self.cs, self.cd, self.dot, self.n = cs, cd, dot, n 
+
+    # Defining the PreNAH of all the manholes
+    self.pre_nah = dict()
+    for x, h in self.pozos.items():
+      self.pre_nah[x] = h - 0.5
 
   def algoFiller(self):
     sections_goodie = list()
@@ -50,10 +61,10 @@ class Sewerage:
 
     for i in self.tramos:
       i = list(i)
-      if i[6] != '?': sections_goodie.append(i)
+      if type(i[6]) != type('?'): sections_goodie.append(i)
       else: sections_baddie.append(i)
 
-    if len(sections_baddie) == 0: 
+    if len(sections_baddie) == 0:
       return self.tramos
 
     while True:
@@ -67,7 +78,7 @@ class Sewerage:
           if h[7] == '?':
             self.tramos = sections_baddie + sections_goodie
             return self.algoFiller()
-          else: 
+          else:
             total += h[7]
             continue
         else: continue
@@ -79,37 +90,53 @@ class Sewerage:
     ran[7] = ran[6] + ran[5]
     sections_goodie.append(ran)
 
-    if len(sections_baddie) != 0: 
+    if len(sections_baddie) != 0:
       self.tramos = sections_baddie + sections_goodie
       return self.algoFiller()
     else:
       self.tramos = sections_goodie
       return self.tramos
-  
+
   def slope(self):
     for i in self.tramos:
+      # Calculate/Confirm the height
+      difference = self.pozos[i[1]] - self.pozos[i[2]]
+      i[4] = round( abs( difference ), 3)
+
+      # Calculate Slopes
       slope = i[4] / i[3]
-      i.append(slope)
+      if slope < 0.002:
+        i.append(0.002)
+      elif difference <= 0:
+        i.append(0.002)
+      else:
+        i.append(slope)
     return self.tramos
 
-  def designPipe(self):
-    for i in self.tramos:
+  def designPipe(self, dtfix = set()):
+    for h, i in enumerate(self.tramos):
       # Checker #
-      if len(i) > 9: del i[9:]
-      else: pass
-
+      index = set()
+      index.add(h)
+      if len(i) > 9:
+        d = i[14]
+        del i[9:]
+      else: 
+        pass
+      
       #	Harmon Coeff #
       if i[7] < 1000: M = 3.8
       elif i[7] > 100000: M = 2
       else: M = 1 + 14 / ( 4 + math.sqrt( i[7] / 1000 ) )
       i.append(M)
-      
+
       # Flows #
       q_med = self.dot * self.cd * i[7] / 86400
       if q_med < 1: q_med = 1
       else: q_med += 0
-      
+
       q_min = q_med * 0.5
+
       if q_min < 1: q_min = 1
       else: q_min += 0
 
@@ -122,21 +149,31 @@ class Sewerage:
 
       diameter = 8
       # Design Tube #
-      while True:
-        phi = diameter * 0.0254
-        q_init = (1 / self.n) * (i[8] ** (1/2)) * ((phi/4) ** (2/3)) * 1000 * math.pi * (phi ** 2) / 4
-        if q_init > q_extr:
-          i.append(diameter)
-          i.append(q_init)
-          break
-        else:
-          diameter += 2
-          continue
+      q_full = lambda diam: (1 / self.n) * (i[8] ** (1/2)) * ((diam/4) ** (2/3)) * 1000 * math.pi * (diam ** 2) / 4
+
+      if index.issubset(dtfix) == False: 
+        while True:
+          phi = diameter * 0.0254
+          q_comp = q_full(phi)
+          if q_comp > q_extr:
+            i.append(diameter)
+            i.append(q_comp)
+            break
+          else:
+            diameter += 2
+            continue
+      else:
+        d += 2
+        q_comp = q_full(d)
+        i.append(d)
+        i.append(q_comp)
+      
+    if len(dtfix) != 0:
+      return self.hydAnalysis()
     return self.tramos
 
   def separationRegulations(self):
-    wrong = list()
-    fixed = list()
+    wrong, fixed = list(), list()
 
     for i in self.tramos:
       d = i[14] * 2.54
@@ -180,91 +217,121 @@ class Sewerage:
         section_fine.append(own + added)
         section_fine.append(partial[8])
         added += own
-    
+
         fixed.append(section_fine)
+    listilla = list()
     for k in wrong:
       self.tramos.remove(k[0])
+      listilla.append(k[0])
     self.tramos += fixed
-    
-    return self.designPipe()
+
+    return self.designPipe(), listilla
 
   def hydAnalysis(self):
     self.analysis = list()
-    for i in self.tramos:
+    bad_indexes = set()
+
+    for z, i in enumerate(self.tramos):
       tramo = list()
       d = i[14] * 0.0254
       r = d / 2
       s = i[8]
-      q_min, q_med, q_int, q_ext = i[10], i[11], i[12], i[13]
-      theta_deg = 0
+      flows = [ i[10], i[11], i[12], i[13] ]
 
       tramo.append(i[0])
       tramo.append(i[1])
       tramo.append(i[2])
 
-      area     = lambda theta: ( math.pi * theta / 360 - 0.5 * math.sin( math.radians(theta) ) ) * ( r ** 2 )
-      rh       = lambda theta: ( 1 - 360 * ( math.sin( math.radians(theta) ) / theta / math.pi / 2) ) * r / 2
+      area = lambda theta: ( math.pi * theta / 360 - 0.5 * math.sin( math.radians(theta) ) ) * ( r ** 2 )
+      rh = lambda theta: ( 1 - 360 * ( math.sin( math.radians(theta) ) / theta / math.pi / 2) ) * r / 2
       velocity = lambda theta: ( 1 / self.n ) * ( rh(theta) ** (2 / 3) ) * ( s ** (1 / 2) )
-      theta    = lambda depth: 2 * math.acos( ( 1 - ( depth / r ) )*( math.pi / 180 ) )
-      tirante  = lambda theta: r * ( 1 - math.cos( math.radians( 0.5 * theta ) ) ) * 100
+      t = lambda theta: r * ( 1 - math.cos( math.radians( 0.5 * theta ) ) ) * 100
+      flowCompute = lambda angle, flow: area(angle) * velocity(angle) * 1000 - flow
 
-      error = 100
-      while True:
-        theta_deg += 0.001
-        q_comp = area(theta_deg) * velocity(theta_deg) * 1000
-        error = abs(q_min - q_comp) * 100 / q_min
-        t = tirante(theta_deg)
-        if error < 1:
-          break
-        else: continue
-      tramo.append(t)
+      for u in flows:
+        phi = sci.bisect(flowCompute, 0.0001, 360, args=(u))
+        tirante = t(phi)
+        tramo.append(tirante)
       
-      error = 100
-      while True:
-        theta_deg += 0.001
-        q_comp = area(theta_deg) * velocity(theta_deg) * 1000
-        error = abs(q_med - q_comp) * 100 / q_med
-        t = tirante(theta_deg)
-        if error < 1:
-          break
-        else: continue
-      tramo.append(t)
+      prctg_filled = area(phi) * 100 / area(360)
+      tramo.append(prctg_filled)
 
-      error = 100
-      while True:
-        theta_deg += 0.001
-        q_comp = area(theta_deg) * velocity(theta_deg) * 1000
-        error = abs(q_int - q_comp) * 100 / q_int
-        t = tirante(theta_deg)
-        if error < 1:
-          break
-        else: continue
-      tramo.append(t)
-
-      error = 100
-      while True:
-        theta_deg += 0.001
-        q_comp = area(theta_deg) * velocity(theta_deg) * 1000
-        error = abs(q_ext - q_comp) * 100 / q_ext
-        t = tirante(theta_deg)
-        if error < 1:
-          break
-        else: continue
-      tramo.append(t)
-      self.analysis.append(tramo)
-    return self.analysis
+      if prctg_filled >= 80:
+        bad_indexes.add(z)
   
-  def exe(self):
-    self.algoFiller()
-    self.slope()
-    self.designPipe()
-    self.separationRegulations()
-    return self.tramos
+      self.analysis.append(tramo)
+
+    if len(bad_indexes) == 0:
+      return self.analysis
+    else:
+      return self.designPipe(dtfix = bad_indexes)
+
+  def nivelesArrastre(self):
+    self.new_nah = self.pre_nah
+
+    for i in self.tramos:
+      start, end, slope, lenght = i[1], i[2], i[8], i[3]
+      if self.pre_nah[end] < self.pre_nah[start]:
+        self.new_nah[start] = self.pre_nah[start]
+        self.new_nah[end] = self.pre_nah[end]
+        continue
+      else:
+        self.new_nah[start] = self.pre_nah[start]
+        self.new_nah[end] = self.pre_nah[start] - slope * lenght
+
+    if self.new_nah == self.pre_nah:
+      return self.new_nah
+    else:
+      return self.nivelesArrastre()
 
 if __name__ == '__main__':
-  analysis = asker()
-  sew = Sewerage(analysis, cd = 0.8, cs= 1.5,dot= 200 ,n= 0.009)
-  for i in sew.exe():
-    print(i)
-  for i in sew.hydAnalysis():
-    print(i)
+  section, manholes = asker()  
+  sew = Sewerage(section, manholes, n= 0.01)
+  try:
+    filled = sew.algoFiller()
+  except:
+    import sys; sys.setrecursionlimit(1500); 
+    filled = sew.algoFiller()
+  
+  slopes = sew.slope()
+  design = sew.designPipe()
+  nah    = sew.nivelesArrastre()
+  hyd    = sew.hydAnalysis()
+  #_, wrong = sew.separationRegulations()
+  import xlsxwriter
+  workbook = xlsxwriter.Workbook("sewerage.xlsx", {'constant_memory': True})
+
+  data_inc  = workbook.add_worksheet('Datos')
+  data_cmp  = workbook.add_worksheet('Datos Completos')
+  analysis  = workbook.add_worksheet('Analisis Hidraulico ')
+  pozosnivl = workbook.add_worksheet('Niveles de Arrastre Hidraulico')
+  incorrect = workbook.add_worksheet('Exceden Longitud')
+
+  def writtingExcel(data, wksheet):
+    if type(data) != type({'s': 3}):
+      row = 0
+      for x in data:
+        col = 0
+        for y in x:
+          wksheet.write(row,col, y)
+          col += 1
+        row += 1
+    else:
+      row = 0
+      for x, y in data.items():
+        wksheet.write(row, 0, x)
+        wksheet.write(row, 1, sew.pozos[x])
+        wksheet.write(row, 2, y)
+        if y < 0:
+          wksheet.write(row, 3, sew.pozos[x] + y * -1)
+        else:
+          wksheet.write(row, 3, sew.pozos[x] - y)
+        row += 1
+    return 0
+
+  writtingExcel(section, data_inc)
+  writtingExcel(sew.tramos, data_cmp)
+  writtingExcel(hyd, analysis)
+  writtingExcel(nah, pozosnivl)
+
+  workbook.close()
