@@ -56,6 +56,30 @@ class Sewerage:
     for x, h in self.pozos.items():
       self.pre_nah[x] = h - self.cm
 
+    # Finding the last manhole
+    self.starts, self.ends = set(), set()
+    for h, i in enumerate(self.tramos):
+      self.starts.add(i[1]); self.ends.add(i[2])
+    
+    for i in self.ends:
+      if i not in self.starts:
+        self.final = i
+        break
+
+    # Finding the starting manholes
+    self.pzo_cbcr = list()
+    for h, i in enumerate(self.tramos):
+      start = i[1]
+      coincidence_count = 0
+      for k, j in enumerate(self.tramos):
+        end_2 = j[2]
+        if start == end_2:
+          coincidence_count += 1
+      if coincidence_count == 0:
+        self.pzo_cbcr.append(i[:3])
+      else:
+        continue
+
   def algoFiller(self):
     sections_goodie = list()
     sections_baddie = list()
@@ -95,38 +119,65 @@ class Sewerage:
       self.tramos = sections_baddie + sections_goodie
       return self.algoFiller()
     else:
-      #index, names =  dict(), list()
-      #
-      #for h, i in enumerate(sections_goodie):
-      #  name = i[0]
-      #  index[name] = h
-      #  names.append(name)
+      index, self.names =  dict(), list()
+      
+      for h, i in enumerate(sections_goodie):
+        name = i[0]
+        index[name] = h
+        self.names.append(name)
 
-      #names.sort()
-      #sections_goodie_ordered = list()
-      #for i in names:
-      #  indexes = index[i]
-      #  section = sections_goodie[indexes]
-      #  sections_goodie_ordered.append(section)
-
-      self.tramos = sections_goodie
-      #self.tramos = sections_goodie_ordered
+      self.names.sort()
+      sections_goodie_ordered = list()
+      for i in self.names:
+        indexes = index[i]
+        section = sections_goodie[indexes]
+        sections_goodie_ordered.append(section)
+      
+      self.indexes = dict()
+      for h, i in enumerate(sections_goodie_ordered):
+        self.indexes[i[1]] = h
+      self.tramos = sections_goodie_ordered
       return self.tramos
 
+  def track2End(self, tramo, mh= list()):
+    end = tramo[2]
+    while True:
+      rnd_section = random.choice(sew.tramos)
+      if end == rnd_section[1]:
+        mh.append(rnd_section[2])
+        return self.track2End(rnd_section, mh)
+      if end == sew.final: break
+    return mh
+  
   def slope(self):
+    # Getting the correct NAH distribution
+    for i in self.pzo_cbcr:
+      trace = self.track2End(i, [i[1], i[2]])
+      for k, j in enumerate(trace):
+        if j == self.final: continue
+        section = self.tramos[self.indexes[j]]
+        start, end, length = section[1],  section[2], section[3]
+
+        s = (self.pre_nah[end] - self.pre_nah[start]) / length
+        if  -0.002 <= s: s = -0.002 # Small Slope and Against slope
+        else: pass # Big Slope
+
+        # Updating the pre_nah
+        if self.pre_nah[start] < self.pre_nah[end]:
+          self.pre_nah[end] = self.pre_nah[start] + length * s
+
+    # Computing Slopes for all section
     for i in self.tramos:
       # Calculate/Confirm the height
-      difference = self.pozos[i[1]] - self.pozos[i[2]]
-      i[4] = round( abs( difference ), 3)
+      difference, length = self.pre_nah[i[2]] - self.pre_nah[i[1]], i[3]
+      i[4] = round( difference, 3)
+      s = difference / length
 
-      # Calculate Slopes
-      slope = i[4] / i[3]
-      if slope < 0.002:
-        i.append(0.002)
-      elif difference <= 0:
-        i.append(0.002)
-      else:
-        i.append(slope)
+      if  -0.002 <= s: s = -0.002 # Small Slope and Against slope
+      else: pass # Big Slope
+
+      i.append(abs(s))
+      
     return self.tramos
 
   def designFlows(self):
@@ -159,10 +210,10 @@ class Sewerage:
   def designPrePipe(self):
     for h, i in enumerate(self.tramos):
       # Checker #
-      q_extr =  i[13]
+      q_extr, slope =  i[13], i[8]
       diameter = 8
       # Design Tube #
-      q_full = lambda diam: (1 / self.n) * (i[8] ** (1/2)) * ((diam/4) ** (2/3)) * 1000 * math.pi * (diam ** 2) / 4
+      q_full = lambda diam: (1 / self.n) * ( slope ** (1/2)) * ((diam/4) ** (2/3)) * 1000 * math.pi * (diam ** 2) / 4
 
       while True:
         phi = diameter * 0.0254
@@ -231,50 +282,26 @@ class Sewerage:
     return self.analysis
 
   def nivelesArrastre(self):
-    self.new_nah = self.pre_nah
-
-    for i in self.tramos:
-      start, end, slope, lenght = i[1], i[2], i[8], i[3]
-      if self.pre_nah[end] < self.pre_nah[start]:
-        self.new_nah[start] = self.pre_nah[start]
-        self.new_nah[end] = self.pre_nah[end]
-        continue
-      else:
-        self.new_nah[start] = self.pre_nah[start]
-        self.new_nah[end] = self.pre_nah[start] - slope * lenght
-
-    if self.new_nah == self.pre_nah:
-      return self.new_nah
-    else:
-      return self.nivelesArrastre()
-
-  def startFinder(self):
-    self.pzo_cbcr = list()
-
-    for h, i in enumerate(self.tramos):
-      start = i[1]
-      coincidence_count = 0
-      for k, j in enumerate(self.tramos):
-        end_2 = j[2]
-        if start == end_2:
-          coincidence_count += 1
-      if coincidence_count == 0:
-        self.pzo_cbcr.append(i)
-      else:
-        continue
-    return self.pzo_cbcr
+    for x, y in self.pre_nah.items():
+      d_set = list()
+      for h, i in enumerate(self.tramos):
+        start, end = i[1], i[2]
+        if start == x or end == x:
+          d_set.append(i[14])
+      d_set.sort(reverse= True)
+      self.standard_nah[x] = self.pre_nah[x] - d_set[0] * 0.0254
+    return self.standard_nah
 
 if __name__ == '__main__':
-  #section, manholes = asker()
-  sew = Sewerage(section, manholes, n= 0.009, cm= 0.5)
   sys.setrecursionlimit(10000)
-  filled = sew.algoFiller()
+  sew = Sewerage(section, manholes, n= 0.009, cm= 0.5)
+  sew.algoFiller()
   sew.slope()
   sew.designFlows()
   sew.designPrePipe()
+  sew.hydAnalysis()
   nah = sew.nivelesArrastre()
-  hyd = sew.hydAnalysis()
-  sew.startFinder()
+
   # Writting data in a xlsx file
   workbook = xlsxwriter.Workbook("sewerage.xlsx")
   data_inc  = workbook.add_worksheet('Datos')
@@ -309,56 +336,38 @@ if __name__ == '__main__':
 
   writtingExcel(section, data_inc)
   writtingExcel(sew.tramos, data_cmp)
-  writtingExcel(hyd, analysis)
+  writtingExcel(sew.analysis, analysis)
   writtingExcel(nah, pozosnivl)
   workbook.close()
-
   # Writting finished
   
-  # Getting index of sections #
-  tramos_ind = dict()
-  for i, h in enumerate(sew.tramos):
-    start = h[1]
-    tramos_ind[start] = i
-
-  def getter(tramo, mh):
-    end = tramo[2]
-    while True:
-      rnd_section = random.choice(sew.tramos)
-      if end == rnd_section[1]:
-        mh.append(rnd_section[2])
-        return getter(rnd_section, mh)
-      if end == '26':
-        break
-    return mh
-
+  # Plotting each section route
   for i in sew.pzo_cbcr:
     a, start, end, distance = i, i[1], i[2], list()
-    memory_mh = list()
-    memory_mh.append(start)
-    memory_mh.append(end)
-
-    pozos = getter(a, memory_mh)
+  
+    pozos = sew.track2End(i, mh= [i[1], i[2]])
     nivpzo, nivnah = list(), list()
     distance.append(0)
     distance_part = 0
     for j in pozos:
-      if j == '26': pass
+      if j == sew.final: pass
       else:
-        distance_part += sew.tramos[tramos_ind[j]][3]
+        distance_part += sew.tramos[sew.indexes[j]][3]
         distance.append(distance_part)
       nivpzo.append(sew.pozos[j])
-      nivnah.append(sew.new_nah[j])
-    #   ax.annotate(txt, (z[i], y[i]))
+      nivnah.append(sew.standard_nah[j])
+  
     fig, ax = plt.subplots()
-    ax.plot(distance, nivnah, '-.c', label= 'Nivel de Arrastre Hidráulico')
-    ax.plot(distance, nivpzo, '-m', label= 'Nivel del Rasante')
-
+    ax.plot(distance, nivnah, '-.c', label= 'Nivel de Arrastre Hidráulico', marker= 'v')
+    ax.plot(distance, nivpzo, '-m', label= 'Nivel del Rasante', marker= '^')
+  
     for i, txt in enumerate(pozos):
       ax.annotate(txt, (distance[i], nivnah[i]))
-
-    ax.grid()
+    ax.set_xlim(0)
+    ax.set_xlabel("Distancia (m)"); ax.set_ylabel("Elevación (m)")
+    ax.grid(axis='both', which='both'); ax.set_axisbelow(False)
     ax.legend()
     ax.set_title(f"A partir del pozo cabecero {pozos[0]}")
-
+    plt.rcParams.update({'figure.max_open_warning': 0})
+    plt.savefig(f"Pozo_cabecero_{pozos[0]}", dpi= 1200, bbox_inches='tight')
   #plt.show()
